@@ -457,7 +457,7 @@ export default function App() {
                 const p=ytPlayer.current;
                 if(!p||!p.getCurrentTime) return;
                 const t=p.getCurrentTime();
-                const d=p.getDuration()||videoDur.current||1;
+                const d=p.getDuration()||videoDur.current||getDur();
                 videoDur.current=d;
                 setScrubPos(t/d);
                 const best=transcript.reduce((a,b)=>Math.abs(b.time-t)<Math.abs(a.time-t)?b:a);
@@ -475,9 +475,10 @@ export default function App() {
     return ()=>{ clearInterval(ytInterval.current); };
   },[videoId]);
 
+  const getDur = () => videoDur.current > 5 ? videoDur.current : (transcript.length > 0 ? transcript[transcript.length-1].time + 10 : 300);
   const seekTo = secs => {
     ytPlayer.current?.seekTo(secs,true);
-    const d=videoDur.current||1;
+    const d = getDur();
     setScrubPos(secs/d);
     if(transcript.length===0) return;
     const best=transcript.reduce((a,b)=>Math.abs(b.time-secs)<Math.abs(a.time-secs)?b:a);
@@ -972,14 +973,14 @@ export default function App() {
               <div className="tl-progress" style={{width:`${scrubPos*100}%`}}/>
             </div>
             {bookmarks.map(b=>(
-              <div key={b.id} className="tl-dot" style={{left:`${(b.time/(videoDur.current||1))*100}%`,pointerEvents:"none"}}/>
+              <div key={b.id} className="tl-dot" style={{left:`${(b.time/getDur())*100}%`,pointerEvents:"none"}}/>
             ))}
             <div className="tl-scrubber" style={{left:`${scrubPos*100}%`,pointerEvents:"none"}}/>
             {tlHover!==null&&(
               <>
                 <div className="tl-ghost" style={{left:`${tlHover*100}%`}}/>
                 <div className="tl-hover-tip" style={{left:`${tlHover*100}%`,pointerEvents:"none"}}>
-                  {fmt(Math.round(tlHover*(videoDur.current||1)))}
+                  {fmt(Math.round(tlHover*getDur()))}
                 </div>
               </>
             )}
@@ -987,7 +988,7 @@ export default function App() {
             <div style={{position:"absolute",inset:0,zIndex:20,cursor:"pointer"}} onClick={e=>{
               const r=e.currentTarget.getBoundingClientRect();
               const ratio=(e.clientX-r.left)/r.width;
-              const t=Math.round(ratio*(videoDur.current||1));
+              const t=Math.round(ratio*getDur());
               seekTo(t);
             }}/>
           </div>
