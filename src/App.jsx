@@ -330,7 +330,16 @@ const S = `
 /* ══════════════════════════════════════════════════════
    CONSTANTS & HELPERS
 ══════════════════════════════════════════════════════ */
-const TRANSCRIPT_FALLBACK = [];
+const TRANSCRIPT = [
+  {time:0,   text:"Welcome to this exploration of architectural philosophy and the principles that shape our built environment."},
+  {time:15,  text:"The notion of phenomenology in architecture concerns itself with how space is experienced through the human body and senses."},
+  {time:31,  text:"Louis Kahn once asked, 'What does the building want to be?' — a question that encapsulates a profound dialogue between material and intention."},
+  {time:52,  text:"The concept of genius loci, or the spirit of place, has guided architects from ancient Rome to contemporary practice."},
+  {time:70,  text:"Light is not merely a functional requirement — it is the medium through which architecture becomes visible and meaningful."},
+  {time:88,  text:"Tectonics refers to the poetics of construction: the way structure becomes expression and form reveals force."},
+  {time:105, text:"In the modernist tradition, Mies van der Rohe distilled architecture to its essential elements — skin, structure, and space."},
+  {time:122, text:"The threshold — that liminal moment of transition between outside and inside — carries enormous psychological weight."},
+];
 const FOLDERS = ["All","Architecture","Philosophy","Favorites"];
 const fmt = s => `${Math.floor(s/60)}:${String(s%60).padStart(2,"0")}`;
 const getVid = u => (u.match(/(?:v=|youtu\.be\/)([a-zA-Z0-9_-]{11})/)||[])[1]||null;
@@ -377,9 +386,6 @@ export default function App() {
   const [chatInput,setChatInput] = useState("");
   const [chatLoading,setChatLoading] = useState(false);
   const [noteFolder,setNoteFolder] = useState("All");
-  const [transcript,setTranscript] = useState(TRANSCRIPT_FALLBACK);
-  const [transcriptLoading,setTranscriptLoading] = useState(false);
-  const [transcriptError,setTranscriptError] = useState(null);
   const [tlHover,setTlHover] = useState(null);
   const [notes,setNotes] = useState([]);
   const [noteModal,setNoteModal] = useState(null); // {time, lineText, folder} — ADD mode
@@ -403,9 +409,85 @@ export default function App() {
   const [allAcctBookmarks,setAllAcctBookmarks] = useState([]);
   const chatEndRef = useRef(null);
   const videoRowId = useRef(null);
+  const pendingSeek = useRef(null);
+  const ytPlayer = useRef(null);
+  const ytInterval = useRef(null);
+  const videoDur = useRef(0);
 
   useEffect(()=>{document.documentElement.className=dark?"dark":"";},[dark]);
   useEffect(()=>{chatEndRef.current?.scrollIntoView({behavior:"smooth"});},[chat]);
+  useEffect(()=>{
+    if(!transcriptRef.current) return;
+    const el=transcriptRef.current.querySelector(".tline.on");
+    if(el) el.scrollIntoView({block:"nearest",behavior:"smooth"});
+  },[activeLine]);
+
+  /* ── YOUTUBE IFRAME API ── */
+  useEffect(()=>{
+    if(!window.YT){
+      const tag=document.createElement("script");
+      tag.src="https://www.youtube.com/iframe_api";
+      document.head.appendChild(tag);
+    }
+  },[]);
+
+  useEffect(()=>{
+    if(!videoId) return;
+    clearInterval(ytInterval.current);
+    if(ytPlayer.current){try{ytPlayer.current.destroy();}catch(e){} ytPlayer.current=null;}
+    videoDur.current=0; setScrubPos(0); setActiveLine(0);
+    const create = () => {
+      ytPlayer.current = new window.YT.Player("yt-player",{
+        videoId,
+        playerVars:{rel:0,modestbranding:1},
+        events:{
+          onReady: e => {
+            videoDur.current = e.target.getDuration()||0;
+            if(pendingSeek.current!==null){
+              e.target.seekTo(pendingSeek.current,true);
+              const d=videoDur.current||1;
+              setScrubPos(pendingSeek.current/d);
+              const best=TRANSCRIPT.reduce((a,b)=>Math.abs(b.time-pendingSeek.current)<Math.abs(a.time-pendingSeek.current)?b:a);
+              setActiveLine(TRANSCRIPT.indexOf(best));
+              pendingSeek.current=null;
+            }
+          },
+          onStateChange: e => {
+            if(pendingSeek.current!==null && e.data===window.YT.PlayerState.PLAYING){
+              ytPlayer.current.seekTo(pendingSeek.current,true);
+              pendingSeek.current=null;
+            }
+            if(e.data===window.YT.PlayerState.PLAYING){
+              clearInterval(ytInterval.current);
+              ytInterval.current = setInterval(()=>{
+                const p=ytPlayer.current;
+                if(!p||!p.getCurrentTime) return;
+                const t=p.getCurrentTime();
+                const d=p.getDuration()||videoDur.current||1;
+                videoDur.current=d;
+                setScrubPos(t/d);
+                const best=TRANSCRIPT.reduce((a,b)=>Math.abs(b.time-t)<Math.abs(a.time-t)?b:a);
+                setActiveLine(TRANSCRIPT.indexOf(best));
+              },500);
+            } else {
+              clearInterval(ytInterval.current);
+            }
+          }
+        }
+      });
+    };
+    if(window.YT&&window.YT.Player) create();
+    else { window.onYouTubeIframeAPIReady=create; }
+    return ()=>{ clearInterval(ytInterval.current); };
+  },[videoId]);
+
+  const seekTo = secs => {
+    ytPlayer.current?.seekTo(secs,true);
+    const d=videoDur.current||1;
+    setScrubPos(secs/d);
+    const best=TRANSCRIPT.reduce((a,b)=>Math.abs(b.time-secs)<Math.abs(a.time-secs)?b:a);
+    setActiveLine(TRANSCRIPT.indexOf(best));
+  };
 
   /* ── AUTH INIT ── */
   useEffect(() => {
@@ -477,29 +559,11 @@ export default function App() {
     } catch { return null; }
   };
 
-  /* ── FETCH TRANSCRIPT ── */
-  const fetchTranscript = async (id) => {
-    setTranscriptLoading(true);
-    setTranscriptError(null);
-    setTranscript([]);
-    try {
-      const res = await fetch(`/api/transcript?videoId=${id}`);
-      const data = await res.json();
-      if(!res.ok) throw new Error(data.error||"Failed to load transcript");
-      setTranscript(data);
-    } catch(e) {
-      setTranscriptError(e.message);
-      setTranscript([]);
-    }
-    setTranscriptLoading(false);
-  };
-
   /* ── LOAD VIDEO ── */
   const loadVideo = async () => {
     const id = getVid(url);
     if(!id){ping("Please paste a valid YouTube URL");return;}
     setVideoId(id);setActiveLine(0);setBookmarks([]);setNotes([]);setVideoTags([]);
-    fetchTranscript(id);
     videoRowId.current = null;
     if(!user) return;
     setDbLoading(true);
@@ -571,11 +635,12 @@ export default function App() {
       }
       return;
     }
-    const ln = transcript[activeLine];
-    if(bookmarks.find(b=>b.time===ln.time)){ping("Already bookmarked");return;}
+    const rawT = ytPlayer.current?.getCurrentTime ? Math.round(ytPlayer.current.getCurrentTime()) : TRANSCRIPT[activeLine].time;
+    const ln = TRANSCRIPT.reduce((a,b)=>Math.abs(b.time-rawT)<Math.abs(a.time-rawT)?b:a);
+    if(bookmarks.find(b=>b.time===rawT)){ping("Already bookmarked");return;}
     const label = ln.text.slice(0,36)+"…";
     try {
-      const rows = await rest("POST","bookmarks",{body:[{video_id:videoRowId.current,time:ln.time,label}]});
+      const rows = await rest("POST","bookmarks",{body:[{video_id:videoRowId.current,time:rawT,label}]});
       if(rows&&rows[0]){
         setBookmarks(p=>[...p,{id:rows[0].id,time:rows[0].time,label:rows[0].label}].sort((a,b)=>a.time-b.time));
         setHistory(h=>h.map(v=>v.id===videoRowId.current?{...v,bookmarks:(v.bookmarks||0)+1}:v));
@@ -593,10 +658,11 @@ export default function App() {
   const addNote = () => {
     if(!user){ping("Sign in to save notes");return;}
     if(!videoRowId.current){ping("Load a video first");return;}
-    const ln = transcript[activeLine];
-    const folder = noteFolder==="All"?"Architecture":noteFolder;
+    const rawT = ytPlayer.current?.getCurrentTime ? Math.round(ytPlayer.current.getCurrentTime()) : TRANSCRIPT[activeLine].time;
+    const ln = TRANSCRIPT.reduce((a,b)=>Math.abs(b.time-rawT)<Math.abs(a.time-rawT)?b:a);
+    const folder = noteFolder==="All"?"Favorites":noteFolder;
     setActiveTab("notes");
-    setNoteModal({time:ln.time, lineText:ln.text, folder, title:"", content:""});
+    setNoteModal({time:rawT, lineText:ln.text, folder, title:"", content:""});
   };
   const saveNote = async () => {
     if(!noteModal) return;
@@ -642,7 +708,7 @@ export default function App() {
   };
   const confirm = (msg, onConfirm) => setConfirmDialog({msg, onConfirm});
 
-  /* ── transcript SELECTION → WIKIPEDIA ── */
+  /* ── TRANSCRIPT SELECTION → WIKIPEDIA ── */
   const handleMouseUp = () => {
     const sel = window.getSelection();
     const text = sel?.toString().trim();
@@ -680,7 +746,7 @@ export default function App() {
     if(!q) return;
     setChatInput("");setChat(p=>[...p,{role:"user",text:q}]);setChatLoading(true);
     try {
-      const tx = transcript.map(l=>`[${fmt(l.time)}] ${l.text}`).join("\n");
+      const tx = TRANSCRIPT.map(l=>`[${fmt(l.time)}] ${l.text}`).join("\n");
       const res = await fetch("https://api.anthropic.com/v1/messages",{
         method:"POST",headers:{"Content-Type":"application/json"},
         body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:1000,
@@ -737,16 +803,25 @@ export default function App() {
   const byTag = allTags.reduce((acc,tag)=>{acc[tag]=filteredHistory.filter(h=>(h.tags||[]).includes(tag));return acc;},{});
 
   // Jump to a history video — load it into the player
-  const jumpToVideo = async (h) => {
+  const jumpToVideo = async (h, seekTime=null) => {
+    if(seekTime!==null) pendingSeek.current = seekTime;
     setAcctOpen(false);
     setUrl(`https://www.youtube.com/watch?v=${h.video_id}`);
     setVideoId(h.video_id);
     setVideoTitle(h.title||"");
     setVideoTags(h.tags||[]);
     setActiveLine(0);
-    fetchTranscript(h.video_id);
     videoRowId.current = h.id;
     await loadVideoData(h.id);
+    // If same video already loaded, seek immediately
+    if(seekTime!==null&&ytPlayer.current?.seekTo){
+      ytPlayer.current.seekTo(seekTime,true);
+      pendingSeek.current=null;
+      const d=videoDur.current||1;
+      setScrubPos(seekTime/d);
+      const best=TRANSCRIPT.reduce((a,b)=>Math.abs(b.time-seekTime)<Math.abs(a.time-seekTime)?b:a);
+      setActiveLine(TRANSCRIPT.indexOf(best));
+    }
     ping("Video loaded ✓");
   };
 
@@ -820,7 +895,7 @@ export default function App() {
           <div className="col-left">
         <div className="vid-wrap">
           {videoId
-            ?<iframe src={`https://www.youtube.com/embed/${videoId}?enablejsapi=1`} allowFullScreen allow="accelerometer;autoplay;clipboard-write;encrypted-media;gyroscope;picture-in-picture" title="YouTube video"/>
+            ?<div id="yt-player" style={{position:"absolute",inset:0,width:"100%",height:"100%"}}/>
             :<div className="vid-empty"><div className="vid-circle">{Ico.play}</div><p>Paste a YouTube link above to start learning</p></div>
           }
         </div>
@@ -883,14 +958,14 @@ export default function App() {
               <div className="tl-progress" style={{width:`${scrubPos*100}%`}}/>
             </div>
             {bookmarks.map(b=>(
-              <div key={b.id} className="tl-dot" style={{left:`${(b.time/DUR)*100}%`,pointerEvents:"none"}}/>
+              <div key={b.id} className="tl-dot" style={{left:`${(b.time/(videoDur.current||1))*100}%`,pointerEvents:"none"}}/>
             ))}
             <div className="tl-scrubber" style={{left:`${scrubPos*100}%`,pointerEvents:"none"}}/>
             {tlHover!==null&&(
               <>
                 <div className="tl-ghost" style={{left:`${tlHover*100}%`}}/>
                 <div className="tl-hover-tip" style={{left:`${tlHover*100}%`,pointerEvents:"none"}}>
-                  {fmt(Math.round(tlHover*DUR))}
+                  {fmt(Math.round(tlHover*(videoDur.current||1)))}
                 </div>
               </>
             )}
@@ -898,10 +973,8 @@ export default function App() {
             <div style={{position:"absolute",inset:0,zIndex:20,cursor:"pointer"}} onClick={e=>{
               const r=e.currentTarget.getBoundingClientRect();
               const ratio=(e.clientX-r.left)/r.width;
-              const t=Math.round(ratio*DUR);
-              setScrubPos(ratio);
-              const cl=transcript.reduce((a,b)=>Math.abs(b.time-t)<Math.abs(a.time-t)?b:a);
-              setActiveLine(transcript.indexOf(cl));
+              const t=Math.round(ratio*(videoDur.current||1));
+              seekTo(t);
             }}/>
           </div>
           <div className="tl-chips">
@@ -909,7 +982,7 @@ export default function App() {
             {bookmarks.map(b=>(
               <div key={b.id} className="tl-chip">
                 <span className="tl-chip-ts">{fmt(b.time)}</span>
-                <span onClick={()=>{const i=transcript.findIndex(l=>l.time>=b.time);if(i>=0){setActiveLine(i);setScrubPos(b.time/DUR);}}}>{b.label.length>22?b.label.slice(0,22)+"…":b.label}</span>
+                <span onClick={()=>seekTo(b.time)}>{b.label.length>22?b.label.slice(0,22)+"…":b.label}</span>
                 <button className="tl-chip-x" onClick={()=>removeBookmark(b.id)}>×</button>
               </div>
             ))}
@@ -931,7 +1004,7 @@ export default function App() {
             ))}
           </div>
 
-          {/* transcript */}
+          {/* TRANSCRIPT */}
           {activeTab==="transcript"&&(
             <>
               <div className="t-controls">
@@ -943,12 +1016,9 @@ export default function App() {
                   {["Original","Chinese","Spanish","French","Japanese","Arabic","German","Portuguese"].map(l=><option key={l}>{l}</option>)}
                 </select>
               </div>
-              {transcriptLoading&&<div style={{padding:"20px 16px",display:"flex",alignItems:"center",gap:10,color:"var(--ink-3)",fontSize:13}}><div className="dots"><div className="dot"/><div className="dot"/><div className="dot"/></div>Loading transcript…</div>}
-              {transcriptError&&<div style={{padding:"16px",margin:"12px 16px",background:"var(--accent-bg)",borderRadius:"var(--r)",fontSize:12.5,color:"var(--accent)",border:"1px solid var(--accent-dim)"}}>{transcriptError} — this video may not have captions.</div>}
-              {!transcriptLoading&&!transcriptError&&transcript.length===0&&<div style={{padding:"24px 16px",textAlign:"center",color:"var(--ink-3)",fontSize:13,fontStyle:"italic"}}>No transcript available. Load a video to begin.</div>}
               <div className="tscroll" ref={transcriptRef} onMouseUp={handleMouseUp}>
-                {transcript.map((line,i)=>(
-                  <div key={i} className={`tline${activeLine===i?" on":""}`} onClick={()=>{setActiveLine(i);setScrubPos(transcript[i].time/DUR);}}>
+                {TRANSCRIPT.map((line,i)=>(
+                  <div key={i} className={`tline${activeLine===i?" on":""}`} onClick={()=>seekTo(TRANSCRIPT[i].time)}>
                     <span className="tts">{fmt(line.time)}</span>
                     <span className="ttxt">{line.text.split(" ").map((w,j)=><span key={j} className="tw">{w}{" "}</span>)}</span>
                   </div>
@@ -1030,7 +1100,7 @@ export default function App() {
                     {filteredNotes.length===0&&<div style={{padding:"24px 0",textAlign:"center"}}><p style={{fontSize:14,color:"var(--ink-3)",fontStyle:"italic",fontFamily:"'IBM Plex Sans',sans-serif"}}>No notes in this folder yet</p></div>}
                     {filteredNotes.map(n=>(
                       <div key={n.id} className="ncard" style={{flexDirection:"column",gap:0,cursor:"default"}}>
-                        <div style={{display:"flex",alignItems:"flex-start",gap:10,cursor:"pointer"}} onClick={()=>{setViewNote(viewNote===n.id?null:n.id);if(ytPlayer.current?.seekTo)ytPlayer.current.seekTo(n.time,true);}}>
+                        <div style={{display:"flex",alignItems:"flex-start",gap:10,cursor:"pointer"}} onClick={()=>{setViewNote(viewNote===n.id?null:n.id);seekTo(n.time);}}>	
                           <div className="ncard-ico" style={{marginTop:3}}>{Ico.note}</div>
                           <div style={{flex:1,minWidth:0}}>
                             <div className="ncard-title">{n.title}</div>
@@ -1038,7 +1108,7 @@ export default function App() {
                           </div>
                           <div style={{display:"flex",gap:2,flexShrink:0}}>
                             <button style={{background:"none",border:"none",cursor:"pointer",color:"var(--ink-3)",padding:"3px 5px",borderRadius:4,transition:"color var(--t)"}}
-                              onClick={e=>{e.stopPropagation();const ln=transcript.find(l=>l.time===n.time)||{text:""};setEditNote({...n,lineText:ln.text});setViewNote(null);}}
+                              onClick={e=>{e.stopPropagation();const ln=TRANSCRIPT.find(l=>l.time===n.time)||{text:""};setEditNote({...n,lineText:ln.text});setViewNote(null);}}
                               onMouseEnter={e=>e.currentTarget.style.color="var(--lav)"}
                               onMouseLeave={e=>e.currentTarget.style.color="var(--ink-3)"}>
                               {Ico.edit}
@@ -1214,7 +1284,7 @@ export default function App() {
                       <div style={{paddingBottom:16}}>
                         {visibleBookmarks.length===0&&<p style={{fontSize:13,color:"var(--ink-3)",fontStyle:"italic",padding:"20px 16px"}}>{activeTagFilter?`No bookmarks tagged #${activeTagFilter}.`:"No bookmarks saved yet."}</p>}
                         {visibleBookmarks.map(b=>(
-                          <div key={b.id} className="acct-item" style={{alignItems:"center"}} onClick={()=>{const vid=dedupedHistory.find(h=>h.id===b.video_id);if(vid)jumpToVideo(vid);}}>
+                          <div key={b.id} className="acct-item" style={{alignItems:"center",cursor:"pointer"}} onClick={()=>{const vid=dedupedHistory.find(h=>h.id===b.video_id);if(vid)jumpToVideo(vid,b.time);}}>
                             <div className="acct-item-thumb">
                               {b.videoYtId?<img src={`https://img.youtube.com/vi/${b.videoYtId}/mqdefault.jpg`} alt=""/>
                                 :<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>}
