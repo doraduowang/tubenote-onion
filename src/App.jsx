@@ -477,16 +477,50 @@ export default function App() {
     } catch { return null; }
   };
 
-  /* ── FETCH transcript ── */
+  /* ── FETCH TRANSCRIPT (client-side via timedtext API) ── */
   const fetchTranscript = async (id) => {
     setTranscriptLoading(true);
     setTranscriptError(null);
     setTranscript([]);
     try {
-      const res = await fetch(`/api/transcript?videoId=${id}`);
-      const data = await res.json();
-      if(!res.ok) throw new Error(data.error||"Failed to load transcript");
-      setTranscript(data);
+      // Step 1: fetch the video page to extract the caption track URL
+      const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(`https://www.youtube.com/watch?v=${id}`)}`;
+      const pageRes = await fetch(proxyUrl);
+      const pageHtml = await pageRes.text();
+
+      // Extract captionTracks from ytInitialPlayerResponse
+      const match = pageHtml.match(/"captionTracks":\s*(\[.*?\])\s*,\s*"audioTracks"/s);
+      if(!match) throw new Error("No captions found for this video");
+
+      const tracks = JSON.parse(match[1]);
+      if(!tracks||tracks.length===0) throw new Error("No captions found for this video");
+
+      // Prefer English, fall back to first available
+      const track = tracks.find(t=>t.languageCode==="en"||t.languageCode==="en-US")
+                 || tracks.find(t=>t.kind!=="asr"&&t.languageCode?.startsWith("en"))
+                 || tracks[0];
+
+      if(!track?.baseUrl) throw new Error("No captions found for this video");
+
+      // Step 2: fetch the actual caption XML
+      const capRes = await fetch(`https://corsproxy.io/?${encodeURIComponent(track.baseUrl)}`);
+      const xml = await capRes.text();
+
+      // Step 3: parse XML into [{time, text}]
+      const parser = new DOMParser();
+      const doc = parser.parseFromString(xml, "text/xml");
+      const texts = Array.from(doc.querySelectorAll("text"));
+      if(texts.length===0) throw new Error("Transcript is empty");
+
+      const result = texts.map(el => ({
+        time: Math.round(parseFloat(el.getAttribute("start")||0)),
+        text: el.textContent
+              .replace(/&amp;/g,"&").replace(/&lt;/g,"<").replace(/&gt;/g,">")
+              .replace(/&quot;/g,'"').replace(/&#39;/g,"'")
+              .replace(/<[^>]+>/g,"").trim()
+      })).filter(l=>l.text.length>0);
+
+      setTranscript(result);
     } catch(e) {
       setTranscriptError(e.message);
       setTranscript([]);
