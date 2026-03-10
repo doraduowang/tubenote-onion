@@ -7,45 +7,77 @@ def fetch_transcript(video_id):
     headers = {
         "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         "Accept-Language": "en-US,en;q=0.9",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Cookie": "CONSENT=YES+cb; GPS=1;",
     }
 
-    # Step 1: get caption track list via YouTube Data API
-    api_url = f"https://www.googleapis.com/youtube/v3/captions?part=snippet&videoId={video_id}&key={YOUTUBE_API_KEY}"
-    req = urllib.request.Request(api_url, headers=headers)
+    # Fetch the YouTube watch page
+    url = f"https://www.youtube.com/watch?v={video_id}&hl=en"
+    req = urllib.request.Request(url, headers=headers)
     with urllib.request.urlopen(req, timeout=15) as r:
-        data = json.loads(r.read().decode("utf-8"))
+        html = r.read().decode("utf-8")
 
-    tracks = data.get("items", [])
+    # Extract caption tracks - try multiple patterns
+    tracks = None
+    patterns = [
+        r'"captionTracks":(\[.*?\]),"audioTracks"',
+        r'"captionTracks":(\[.*?\]),"translationLanguages"',
+        r'"captionTracks":(\[.*?\]),"defaultAudioTrackIndex"',
+    ]
+    for pat in patterns:
+        m = re.search(pat, html)
+        if m:
+            try:
+                tracks = json.loads(m.group(1))
+                break
+            except:
+                continue
+
     if not tracks:
-        raise ValueError("No captions available for this video")
+        # Try extracting from innertubeApiKey section
+        m = re.search(r'"playerCaptionsTracklistRenderer":\{"captionTracks":(\[.*?\])', html)
+        if m:
+            try:
+                tracks = json.loads(m.group(1))
+            except:
+                pass
 
-    # Prefer English manual > English auto > any
+    if not tracks:
+        raise ValueError("No captions found for this video")
+
+    # Prefer English manual > English ASR > any
     def score(t):
-        lang = t["snippet"].get("language","")
-        kind = t["snippet"].get("trackKind","")
-        if lang in ("en","en-US") and kind == "standard": return 0
-        if lang.startswith("en") and kind == "standard": return 1
-        if lang in ("en","en-US"): return 2
+        lang = t.get("languageCode", "")
+        kind = t.get("kind", "")
+        name = t.get("name", {}).get("simpleText", "")
+        if lang in ("en", "en-US", "en-GB") and kind != "asr": return 0
+        if lang.startswith("en") and kind != "asr": return 1
+        if lang in ("en", "en-US", "en-GB"): return 2
         if lang.startswith("en"): return 3
         return 4
 
     track = sorted(tracks, key=score)[0]
-    track_id = track["id"]
+    base_url = track.get("baseUrl", "")
+    if not base_url:
+        raise ValueError("No caption URL found")
 
-    # Step 2: download caption XML
-    cap_url = f"https://www.googleapis.com/youtube/v3/captions/{track_id}?key={YOUTUBE_API_KEY}&tfmt=srv3"
-    cap_req = urllib.request.Request(cap_url, headers=headers)
+    # Clean up URL escaping
+    base_url = base_url.replace("\\u0026", "&").replace("\\/", "/")
+
+    # Fetch caption XML
+    cap_req = urllib.request.Request(base_url + "&fmt=srv3", headers=headers)
     with urllib.request.urlopen(cap_req, timeout=15) as r:
         xml = r.read().decode("utf-8")
 
     def clean(text):
         text = re.sub(r'<[^>]+>', '', text)
         text = text.replace('&amp;','&').replace('&lt;','<').replace('&gt;','>') \
-                   .replace('&quot;','"').replace('&#39;',"'").strip()
+                   .replace('&quot;','"').replace('&#39;',"'") \
+                   .replace('\n', ' ').strip()
         return text
 
     entries = re.findall(r'start="([\d.]+)"[^>]*>(.+?)</text>', xml, re.DOTALL)
-    result = [{"time": round(float(s)), "text": clean(t)} for s,t in entries if clean(t)]
+    result = [{"time": round(float(s)), "text": clean(t)} for s, t in entries if clean(t)]
 
     if not result:
         raise ValueError("Transcript is empty")
@@ -56,9 +88,9 @@ class handler(BaseHTTPRequestHandler):
     def do_GET(self):
         video_id = None
         if "?" in self.path:
-            for part in self.path.split("?",1)[1].split("&"):
+            for part in self.path.split("?", 1)[1].split("&"):
                 if part.startswith("videoId="):
-                    video_id = urllib.parse.unquote(part.split("=",1)[1])
+                    video_id = urllib.parse.unquote(part.split("=", 1)[1])
                     break
 
         if not video_id:
