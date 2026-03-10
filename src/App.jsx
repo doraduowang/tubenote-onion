@@ -330,7 +330,16 @@ const S = `
 /* ══════════════════════════════════════════════════════
    CONSTANTS & HELPERS
 ══════════════════════════════════════════════════════ */
-const TRANSCRIPT_FALLBACK = [];
+const TRANSCRIPT = [
+  {time:0,   text:"Welcome to this exploration of architectural philosophy and the principles that shape our built environment."},
+  {time:15,  text:"The notion of phenomenology in architecture concerns itself with how space is experienced through the human body and senses."},
+  {time:31,  text:"Louis Kahn once asked, 'What does the building want to be?' — a question that encapsulates a profound dialogue between material and intention."},
+  {time:52,  text:"The concept of genius loci, or the spirit of place, has guided architects from ancient Rome to contemporary practice."},
+  {time:70,  text:"Light is not merely a functional requirement — it is the medium through which architecture becomes visible and meaningful."},
+  {time:88,  text:"Tectonics refers to the poetics of construction: the way structure becomes expression and form reveals force."},
+  {time:105, text:"In the modernist tradition, Mies van der Rohe distilled architecture to its essential elements — skin, structure, and space."},
+  {time:122, text:"The threshold — that liminal moment of transition between outside and inside — carries enormous psychological weight."},
+];
 const FOLDERS = ["All","Architecture","Philosophy","Favorites"];
 const fmt = s => `${Math.floor(s/60)}:${String(s%60).padStart(2,"0")}`;
 const getVid = u => (u.match(/(?:v=|youtu\.be\/)([a-zA-Z0-9_-]{11})/)||[])[1]||null;
@@ -377,9 +386,6 @@ export default function App() {
   const [chatInput,setChatInput] = useState("");
   const [chatLoading,setChatLoading] = useState(false);
   const [noteFolder,setNoteFolder] = useState("All");
-  const [transcript,setTranscript] = useState([]);
-  const [transcriptLoading,setTranscriptLoading] = useState(false);
-  const [transcriptError,setTranscriptError] = useState(null);
   const [tlHover,setTlHover] = useState(null);
   const [notes,setNotes] = useState([]);
   const [noteModal,setNoteModal] = useState(null); // {time, lineText, folder} — ADD mode
@@ -441,8 +447,8 @@ export default function App() {
               e.target.seekTo(pendingSeek.current,true);
               const d=videoDur.current||1;
               setScrubPos(pendingSeek.current/d);
-              const best=transcript.reduce((a,b)=>Math.abs(b.time-pendingSeek.current)<Math.abs(a.time-pendingSeek.current)?b:a);
-              setActiveLine(transcript.indexOf(best));
+              const best=TRANSCRIPT.reduce((a,b)=>Math.abs(b.time-pendingSeek.current)<Math.abs(a.time-pendingSeek.current)?b:a);
+              setActiveLine(TRANSCRIPT.indexOf(best));
               pendingSeek.current=null;
             }
           },
@@ -457,11 +463,11 @@ export default function App() {
                 const p=ytPlayer.current;
                 if(!p||!p.getCurrentTime) return;
                 const t=p.getCurrentTime();
-                const d=p.getDuration()||videoDur.current||getDur();
+                const d=p.getDuration()||videoDur.current||1;
                 videoDur.current=d;
                 setScrubPos(t/d);
-                const best=transcript.reduce((a,b)=>Math.abs(b.time-t)<Math.abs(a.time-t)?b:a);
-                setActiveLine(transcript.indexOf(best));
+                const best=TRANSCRIPT.reduce((a,b)=>Math.abs(b.time-t)<Math.abs(a.time-t)?b:a);
+                setActiveLine(TRANSCRIPT.indexOf(best));
               },500);
             } else {
               clearInterval(ytInterval.current);
@@ -475,14 +481,12 @@ export default function App() {
     return ()=>{ clearInterval(ytInterval.current); };
   },[videoId]);
 
-  const getDur = () => videoDur.current > 5 ? videoDur.current : (transcript.length > 0 ? transcript[transcript.length-1].time + 10 : 300);
   const seekTo = secs => {
     ytPlayer.current?.seekTo(secs,true);
-    const d = getDur();
+    const d=videoDur.current||1;
     setScrubPos(secs/d);
-    if(transcript.length===0) return;
-    const best=transcript.reduce((a,b)=>Math.abs(b.time-secs)<Math.abs(a.time-secs)?b:a);
-    setActiveLine(transcript.indexOf(best));
+    const best=TRANSCRIPT.reduce((a,b)=>Math.abs(b.time-secs)<Math.abs(a.time-secs)?b:a);
+    setActiveLine(TRANSCRIPT.indexOf(best));
   };
 
   /* ── AUTH INIT ── */
@@ -555,29 +559,11 @@ export default function App() {
     } catch { return null; }
   };
 
-  /* ── FETCH transcript ── */
-  const fetchTranscript = async (id) => {
-    setTranscriptLoading(true);
-    setTranscriptError(null);
-    setTranscript([]);
-    try {
-      const res = await fetch(`/api/transcript?videoId=${id}`);
-      const data = await res.json();
-      if(!res.ok) throw new Error(data.error||"Failed to load transcript");
-      setTranscript(data);
-    } catch(e) {
-      setTranscriptError(e.message);
-      setTranscript([]);
-    }
-    setTranscriptLoading(false);
-  };
-
   /* ── LOAD VIDEO ── */
   const loadVideo = async () => {
     const id = getVid(url);
     if(!id){ping("Please paste a valid YouTube URL");return;}
     setVideoId(id);setActiveLine(0);setBookmarks([]);setNotes([]);setVideoTags([]);
-    fetchTranscript(id);
     videoRowId.current = null;
     if(!user) return;
     setDbLoading(true);
@@ -649,8 +635,8 @@ export default function App() {
       }
       return;
     }
-    const rawT = ytPlayer.current?.getCurrentTime ? Math.round(ytPlayer.current.getCurrentTime()) : transcript[activeLine].time;
-    const ln = transcript.reduce((a,b)=>Math.abs(b.time-rawT)<Math.abs(a.time-rawT)?b:a);
+    const rawT = ytPlayer.current?.getCurrentTime ? Math.round(ytPlayer.current.getCurrentTime()) : TRANSCRIPT[activeLine].time;
+    const ln = TRANSCRIPT.reduce((a,b)=>Math.abs(b.time-rawT)<Math.abs(a.time-rawT)?b:a);
     if(bookmarks.find(b=>b.time===rawT)){ping("Already bookmarked");return;}
     const label = ln.text.slice(0,36)+"…";
     try {
@@ -672,8 +658,8 @@ export default function App() {
   const addNote = () => {
     if(!user){ping("Sign in to save notes");return;}
     if(!videoRowId.current){ping("Load a video first");return;}
-    const rawT = ytPlayer.current?.getCurrentTime ? Math.round(ytPlayer.current.getCurrentTime()) : transcript[activeLine].time;
-    const ln = transcript.reduce((a,b)=>Math.abs(b.time-rawT)<Math.abs(a.time-rawT)?b:a);
+    const rawT = ytPlayer.current?.getCurrentTime ? Math.round(ytPlayer.current.getCurrentTime()) : TRANSCRIPT[activeLine].time;
+    const ln = TRANSCRIPT.reduce((a,b)=>Math.abs(b.time-rawT)<Math.abs(a.time-rawT)?b:a);
     const folder = noteFolder==="All"?"Favorites":noteFolder;
     setActiveTab("notes");
     setNoteModal({time:rawT, lineText:ln.text, folder, title:"", content:""});
@@ -722,7 +708,7 @@ export default function App() {
   };
   const confirm = (msg, onConfirm) => setConfirmDialog({msg, onConfirm});
 
-  /* ── transcript SELECTION → WIKIPEDIA ── */
+  /* ── TRANSCRIPT SELECTION → WIKIPEDIA ── */
   const handleMouseUp = () => {
     const sel = window.getSelection();
     const text = sel?.toString().trim();
@@ -760,7 +746,7 @@ export default function App() {
     if(!q) return;
     setChatInput("");setChat(p=>[...p,{role:"user",text:q}]);setChatLoading(true);
     try {
-      const tx = transcript.map(l=>`[${fmt(l.time)}] ${l.text}`).join("\n");
+      const tx = TRANSCRIPT.map(l=>`[${fmt(l.time)}] ${l.text}`).join("\n");
       const res = await fetch("https://api.anthropic.com/v1/messages",{
         method:"POST",headers:{"Content-Type":"application/json"},
         body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:1000,
@@ -825,7 +811,6 @@ export default function App() {
     setVideoTitle(h.title||"");
     setVideoTags(h.tags||[]);
     setActiveLine(0);
-    fetchTranscript(h.video_id);
     videoRowId.current = h.id;
     await loadVideoData(h.id);
     // If same video already loaded, seek immediately
@@ -834,8 +819,8 @@ export default function App() {
       pendingSeek.current=null;
       const d=videoDur.current||1;
       setScrubPos(seekTime/d);
-      const best=transcript.reduce((a,b)=>Math.abs(b.time-seekTime)<Math.abs(a.time-seekTime)?b:a);
-      setActiveLine(transcript.indexOf(best));
+      const best=TRANSCRIPT.reduce((a,b)=>Math.abs(b.time-seekTime)<Math.abs(a.time-seekTime)?b:a);
+      setActiveLine(TRANSCRIPT.indexOf(best));
     }
     ping("Video loaded ✓");
   };
@@ -973,14 +958,14 @@ export default function App() {
               <div className="tl-progress" style={{width:`${scrubPos*100}%`}}/>
             </div>
             {bookmarks.map(b=>(
-              <div key={b.id} className="tl-dot" style={{left:`${(b.time/getDur())*100}%`,pointerEvents:"none"}}/>
+              <div key={b.id} className="tl-dot" style={{left:`${(b.time/(videoDur.current||1))*100}%`,pointerEvents:"none"}}/>
             ))}
             <div className="tl-scrubber" style={{left:`${scrubPos*100}%`,pointerEvents:"none"}}/>
             {tlHover!==null&&(
               <>
                 <div className="tl-ghost" style={{left:`${tlHover*100}%`}}/>
                 <div className="tl-hover-tip" style={{left:`${tlHover*100}%`,pointerEvents:"none"}}>
-                  {fmt(Math.round(tlHover*getDur()))}
+                  {fmt(Math.round(tlHover*(videoDur.current||1)))}
                 </div>
               </>
             )}
@@ -988,7 +973,7 @@ export default function App() {
             <div style={{position:"absolute",inset:0,zIndex:20,cursor:"pointer"}} onClick={e=>{
               const r=e.currentTarget.getBoundingClientRect();
               const ratio=(e.clientX-r.left)/r.width;
-              const t=Math.round(ratio*getDur());
+              const t=Math.round(ratio*(videoDur.current||1));
               seekTo(t);
             }}/>
           </div>
@@ -1019,7 +1004,7 @@ export default function App() {
             ))}
           </div>
 
-          {/* transcript */}
+          {/* TRANSCRIPT */}
           {activeTab==="transcript"&&(
             <>
               <div className="t-controls">
@@ -1031,12 +1016,9 @@ export default function App() {
                   {["Original","Chinese","Spanish","French","Japanese","Arabic","German","Portuguese"].map(l=><option key={l}>{l}</option>)}
                 </select>
               </div>
-              {transcriptLoading&&<div style={{padding:"20px 16px",display:"flex",alignItems:"center",gap:10,color:"var(--ink-3)",fontSize:13}}><div className="dots"><div className="dot"/><div className="dot"/><div className="dot"/></div>Loading transcript…</div>}
-              {transcriptError&&<div style={{padding:"16px",margin:"12px 16px",background:"var(--accent-bg)",borderRadius:"var(--r)",fontSize:12.5,color:"var(--accent)",border:"1px solid var(--accent-dim)"}}>{transcriptError} — this video may not have captions.</div>}
-              {!transcriptLoading&&!transcriptError&&transcript.length===0&&<div style={{padding:"24px 16px",textAlign:"center",color:"var(--ink-3)",fontSize:13,fontStyle:"italic"}}>No transcript available. Load a video to begin.</div>}
               <div className="tscroll" ref={transcriptRef} onMouseUp={handleMouseUp}>
-                {transcript.map((line,i)=>(
-                  <div key={i} className={`tline${activeLine===i?" on":""}`} onClick={()=>seekTo(transcript[i].time)}>
+                {TRANSCRIPT.map((line,i)=>(
+                  <div key={i} className={`tline${activeLine===i?" on":""}`} onClick={()=>seekTo(TRANSCRIPT[i].time)}>
                     <span className="tts">{fmt(line.time)}</span>
                     <span className="ttxt">{line.text.split(" ").map((w,j)=><span key={j} className="tw">{w}{" "}</span>)}</span>
                   </div>
@@ -1126,7 +1108,7 @@ export default function App() {
                           </div>
                           <div style={{display:"flex",gap:2,flexShrink:0}}>
                             <button style={{background:"none",border:"none",cursor:"pointer",color:"var(--ink-3)",padding:"3px 5px",borderRadius:4,transition:"color var(--t)"}}
-                              onClick={e=>{e.stopPropagation();const ln=transcript.find(l=>l.time===n.time)||{text:""};setEditNote({...n,lineText:ln.text});setViewNote(null);}}
+                              onClick={e=>{e.stopPropagation();const ln=TRANSCRIPT.find(l=>l.time===n.time)||{text:""};setEditNote({...n,lineText:ln.text});setViewNote(null);}}
                               onMouseEnter={e=>e.currentTarget.style.color="var(--lav)"}
                               onMouseLeave={e=>e.currentTarget.style.color="var(--ink-3)"}>
                               {Ico.edit}
