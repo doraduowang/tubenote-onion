@@ -477,7 +477,7 @@ export default function App() {
     } catch { return null; }
   };
 
-  /* ── FETCH TRANSCRIPT (client-side, multiple fallback strategies) ── */
+  /* ── FETCH TRANSCRIPT ── */
   const fetchTranscript = async (id) => {
     setTranscriptLoading(true);
     setTranscriptError(null);
@@ -490,72 +490,62 @@ export default function App() {
     const parseXml = xml => {
       const doc = new DOMParser().parseFromString(xml,"text/xml");
       return Array.from(doc.querySelectorAll("text"))
-        .map(el=>({time:Math.round(parseFloat(el.getAttribute("start")||0)),text:decodeHtml(el.textContent)}))
+        .map(el=>({
+          time: Math.round(parseFloat(el.getAttribute("start")||0)),
+          text: decodeHtml(el.textContent)
+        }))
         .filter(l=>l.text.length>0);
     };
 
-    // Strategy 1: fetch YouTube page via corsproxy, extract caption URL
-    const tryFromPage = async () => {
-      const proxy = "https://corsproxy.io/?";
-      const res = await fetch(proxy + encodeURIComponent(`https://www.youtube.com/watch?v=${id}`));
-      const html = await res.text();
-      // Try multiple regex patterns for different page structures
-      let tracks = null;
-      const patterns = [
-        /"captionTracks":(\[.*?\]),"audioTracks"/,
-        /"captionTracks":(\[.*?\]),"translationLanguages"/,
-        /"captionTracks":(\[[\s\S]*?\])(?:,"audioTracks"|,"translationLanguages")/,
-      ];
-      for(const pat of patterns){
-        const m = html.match(pat);
-        if(m){ try{ tracks = JSON.parse(m[1]); break; }catch(e){} }
+    // Try fetching transcript XML via multiple proxy services
+    const proxies = [
+      url => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
+      url => `https://corsproxy.io/?${encodeURIComponent(url)}`,
+      url => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(url)}`,
+    ];
+
+    const langs = ["en","en-US","en-GB","a.en"];
+
+    for(const proxy of proxies){
+      for(const lang of langs){
+        try{
+          const kind = lang.startsWith("a.") ? "&kind=asr" : "";
+          const cleanLang = lang.replace("a.","");
+          const ytUrl = `https://www.youtube.com/api/timedtext?v=${id}&lang=${cleanLang}${kind}&fmt=srv3`;
+          const res = await fetch(proxy(ytUrl));
+          if(!res.ok) continue;
+          const xml = await res.text();
+          if(!xml||xml.trim().length<50||xml.includes("<!DOCTYPE html")) continue;
+          const result = parseXml(xml);
+          if(result.length>0){
+            setTranscript(result);
+            setTranscriptLoading(false);
+            return;
+          }
+        } catch(e){ continue; }
       }
-      if(!tracks||tracks.length===0) throw new Error("No captions found");
-      const track = tracks.find(t=>t.languageCode==="en"||t.languageCode==="en-US")
-                 || tracks.find(t=>t.languageCode?.startsWith("en"))
-                 || tracks[0];
-      if(!track?.baseUrl) throw new Error("No caption URL");
-      const capRes = await fetch(proxy + encodeURIComponent(track.baseUrl+"&fmt=srv3"));
-      const xml = await capRes.text();
-      const result = parseXml(xml);
-      if(result.length===0) throw new Error("Empty transcript");
-      return result;
-    };
-
-    // Strategy 2: use YouTube timedtext API directly
-    const tryTimedText = async () => {
-      const proxy = "https://corsproxy.io/?";
-      const url = `https://www.youtube.com/api/timedtext?v=${id}&lang=en&fmt=srv3`;
-      const res = await fetch(proxy + encodeURIComponent(url));
-      const xml = await res.text();
-      const result = parseXml(xml);
-      if(result.length===0) throw new Error("Empty");
-      return result;
-    };
-
-    // Strategy 3: try auto-generated captions
-    const tryAuto = async () => {
-      const proxy = "https://corsproxy.io/?";
-      const url = `https://www.youtube.com/api/timedtext?v=${id}&lang=en&kind=asr&fmt=srv3`;
-      const res = await fetch(proxy + encodeURIComponent(url));
-      const xml = await res.text();
-      const result = parseXml(xml);
-      if(result.length===0) throw new Error("Empty");
-      return result;
-    };
-
-    try {
-      let result = null;
-      const strategies = [tryFromPage, tryTimedText, tryAuto];
-      for(const strategy of strategies){
-        try{ result = await strategy(); if(result&&result.length>0) break; }catch(e){}
-      }
-      if(!result||result.length===0) throw new Error("No captions available for this video");
-      setTranscript(result);
-    } catch(e) {
-      setTranscriptError(e.message);
-      setTranscript([]);
     }
+
+    // Last resort: try to get caption URL from YouTube page
+    try{
+      const proxy = proxies[0];
+      const res = await fetch(proxy(`https://www.youtube.com/watch?v=${id}`));
+      const html = await res.text();
+      const m = html.match(/"baseUrl":"(https:\/\/www\.youtube\.com\/api\/timedtext[^"]+)"/);
+      if(m){
+        const capUrl = m[1].replace(/\\u0026/g,"&").replace(/\\//g,"/");
+        const capRes = await fetch(proxy(capUrl));
+        const xml = await capRes.text();
+        const result = parseXml(xml);
+        if(result.length>0){
+          setTranscript(result);
+          setTranscriptLoading(false);
+          return;
+        }
+      }
+    } catch(e){}
+
+    setTranscriptError("No captions available for this video");
     setTranscriptLoading(false);
   };
 
