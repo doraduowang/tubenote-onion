@@ -477,49 +477,80 @@ export default function App() {
     } catch { return null; }
   };
 
-  /* ── FETCH TRANSCRIPT (client-side via timedtext API) ── */
+  /* ── FETCH TRANSCRIPT (client-side, multiple fallback strategies) ── */
   const fetchTranscript = async (id) => {
     setTranscriptLoading(true);
     setTranscriptError(null);
     setTranscript([]);
-    try {
-      // Step 1: fetch the video page to extract the caption track URL
-      const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(`https://www.youtube.com/watch?v=${id}`)}`;
-      const pageRes = await fetch(proxyUrl);
-      const pageHtml = await pageRes.text();
 
-      // Extract captionTracks from ytInitialPlayerResponse
-      const match = pageHtml.match(/"captionTracks":\s*(\[.*?\])\s*,\s*"audioTracks"/s);
-      if(!match) throw new Error("No captions found for this video");
+    const decodeHtml = s => s
+      .replace(/&amp;/g,"&").replace(/&lt;/g,"<").replace(/&gt;/g,">")
+      .replace(/&quot;/g,'"').replace(/&#39;/g,"'").replace(/<[^>]+>/g,"").trim();
 
-      const tracks = JSON.parse(match[1]);
-      if(!tracks||tracks.length===0) throw new Error("No captions found for this video");
+    const parseXml = xml => {
+      const doc = new DOMParser().parseFromString(xml,"text/xml");
+      return Array.from(doc.querySelectorAll("text"))
+        .map(el=>({time:Math.round(parseFloat(el.getAttribute("start")||0)),text:decodeHtml(el.textContent)}))
+        .filter(l=>l.text.length>0);
+    };
 
-      // Prefer English, fall back to first available
+    // Strategy 1: fetch YouTube page via corsproxy, extract caption URL
+    const tryFromPage = async () => {
+      const proxy = "https://corsproxy.io/?";
+      const res = await fetch(proxy + encodeURIComponent(`https://www.youtube.com/watch?v=${id}`));
+      const html = await res.text();
+      // Try multiple regex patterns for different page structures
+      let tracks = null;
+      const patterns = [
+        /"captionTracks":(\[.*?\]),"audioTracks"/,
+        /"captionTracks":(\[.*?\]),"translationLanguages"/,
+        /"captionTracks":(\[[\s\S]*?\])(?:,"audioTracks"|,"translationLanguages")/,
+      ];
+      for(const pat of patterns){
+        const m = html.match(pat);
+        if(m){ try{ tracks = JSON.parse(m[1]); break; }catch(e){} }
+      }
+      if(!tracks||tracks.length===0) throw new Error("No captions found");
       const track = tracks.find(t=>t.languageCode==="en"||t.languageCode==="en-US")
-                 || tracks.find(t=>t.kind!=="asr"&&t.languageCode?.startsWith("en"))
+                 || tracks.find(t=>t.languageCode?.startsWith("en"))
                  || tracks[0];
-
-      if(!track?.baseUrl) throw new Error("No captions found for this video");
-
-      // Step 2: fetch the actual caption XML
-      const capRes = await fetch(`https://corsproxy.io/?${encodeURIComponent(track.baseUrl)}`);
+      if(!track?.baseUrl) throw new Error("No caption URL");
+      const capRes = await fetch(proxy + encodeURIComponent(track.baseUrl+"&fmt=srv3"));
       const xml = await capRes.text();
+      const result = parseXml(xml);
+      if(result.length===0) throw new Error("Empty transcript");
+      return result;
+    };
 
-      // Step 3: parse XML into [{time, text}]
-      const parser = new DOMParser();
-      const doc = parser.parseFromString(xml, "text/xml");
-      const texts = Array.from(doc.querySelectorAll("text"));
-      if(texts.length===0) throw new Error("Transcript is empty");
+    // Strategy 2: use YouTube timedtext API directly
+    const tryTimedText = async () => {
+      const proxy = "https://corsproxy.io/?";
+      const url = `https://www.youtube.com/api/timedtext?v=${id}&lang=en&fmt=srv3`;
+      const res = await fetch(proxy + encodeURIComponent(url));
+      const xml = await res.text();
+      const result = parseXml(xml);
+      if(result.length===0) throw new Error("Empty");
+      return result;
+    };
 
-      const result = texts.map(el => ({
-        time: Math.round(parseFloat(el.getAttribute("start")||0)),
-        text: el.textContent
-              .replace(/&amp;/g,"&").replace(/&lt;/g,"<").replace(/&gt;/g,">")
-              .replace(/&quot;/g,'"').replace(/&#39;/g,"'")
-              .replace(/<[^>]+>/g,"").trim()
-      })).filter(l=>l.text.length>0);
+    // Strategy 3: try auto-generated captions
+    const tryAuto = async () => {
+      const proxy = "https://corsproxy.io/?";
+      const url = `https://www.youtube.com/api/timedtext?v=${id}&lang=en&kind=asr&fmt=srv3`;
+      const res = await fetch(proxy + encodeURIComponent(url));
+      const xml = await res.text();
+      const result = parseXml(xml);
+      if(result.length===0) throw new Error("Empty");
+      return result;
+    };
 
+    try {
+      let result = null;
+      const strategies = [tryFromPage, tryTimedText, tryAuto];
+      for(const strategy of strategies){
+        try{ result = await strategy(); if(result&&result.length>0) break; }catch(e){}
+      }
+      if(!result||result.length===0) throw new Error("No captions available for this video");
       setTranscript(result);
     } catch(e) {
       setTranscriptError(e.message);
