@@ -765,8 +765,10 @@ export default function App() {
     if(authMode==="signup"){
       const {data,error} = await sb.auth.signUp({email:form.email,password:form.password,options:{data:{name:form.name}}});
       if(error){setAuthError(error.message||"Sign up failed");setAuthLoading(false);return;}
-      if(data?.user) await initUser(data.user);
-      ping("Account created! Welcome.");
+      setAuthLoading(false);
+      setAuthMode("verify");
+      setForm(f=>({...f,password:""}));
+      return;
     } else {
       const {data,error} = await sb.auth.signInWithPassword({email:form.email,password:form.password});
       if(error){setAuthError(error.message||"Sign in failed");setAuthLoading(false);return;}
@@ -1372,32 +1374,46 @@ export default function App() {
       {authMode&&(
         <div className="overlay" onClick={()=>setAuthMode(null)}>
           <div className="modal" onClick={e=>e.stopPropagation()}>
-            <div className="m-title">{authMode==="login"?"Welcome back":"Begin your journal"}</div>
-            <div className="m-sub">{authMode==="login"?"Sign in to access your notes and history.":"Create an account to track your learning journey."}</div>
+            <div className="m-title">{authMode==="login"?"Welcome back":authMode==="verify"?"Check your email":"Begin your journal"}</div>
+            <div className="m-sub">{authMode==="login"?"Sign in to access your notes and history.":authMode==="verify"?`We sent a verification link to ${form.email}. Click it to activate your account, then sign in.`:"Create an account to track your learning journey."}</div>
             {authError&&<div className="m-err">{authError}</div>}
             <form onSubmit={doAuth}>
-              {authMode==="signup"&&(<><label className="fl">Name</label><input className="fi" value={form.name} onChange={e=>setForm(f=>({...f,name:e.target.value}))} placeholder="Your name"/></>)}
-              <label className="fl">Email</label>
-              <input className="fi" type="email" required value={form.email} onChange={e=>setForm(f=>({...f,email:e.target.value}))} placeholder="you@example.com"/>
-              <label className="fl">Password</label>
-              <div style={{position:"relative",marginBottom:0}}>
-                <input className="fi" type={form.showPw?"text":"password"} required value={form.password} onChange={e=>setForm(f=>({...f,password:e.target.value}))} placeholder="••••••••" style={{marginBottom:0,paddingRight:38,width:"100%"}}/>
-                <button type="button" onClick={()=>setForm(f=>({...f,showPw:!f.showPw}))}
-                  style={{position:"absolute",right:10,top:"50%",transform:"translateY(-50%)",background:"none",border:"none",cursor:"pointer",color:"var(--ink-3)",padding:2,lineHeight:1,transition:"color var(--t)"}}
-                  onMouseEnter={e=>e.currentTarget.style.color="var(--ink)"}
-                  onMouseLeave={e=>e.currentTarget.style.color="var(--ink-3)"}>
-                  {form.showPw
-                    ? <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94"/><path d="M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
-                    : <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
-                  }
+              {authMode!=="verify"&&<>
+                {authMode==="signup"&&(<><label className="fl">Name</label><input className="fi" value={form.name} onChange={e=>setForm(f=>({...f,name:e.target.value}))} placeholder="Your name"/></>)}
+                <label className="fl">Email</label>
+                <input className="fi" type="email" required value={form.email} onChange={e=>setForm(f=>({...f,email:e.target.value}))} placeholder="you@example.com"/>
+                <label className="fl">Password</label>
+                <div style={{position:"relative",marginBottom:0}}>
+                  <input className="fi" type={form.showPw?"text":"password"} required value={form.password} onChange={e=>setForm(f=>({...f,password:e.target.value}))} placeholder="••••••••" style={{marginBottom:0,paddingRight:38,width:"100%"}}/>
+                  <button type="button" onClick={()=>setForm(f=>({...f,showPw:!f.showPw}))}
+                    style={{position:"absolute",right:10,top:"50%",transform:"translateY(-50%)",background:"none",border:"none",cursor:"pointer",color:"var(--ink-3)",padding:2,lineHeight:1,transition:"color var(--t)"}}
+                    onMouseEnter={e=>e.currentTarget.style.color="var(--ink)"}
+                    onMouseLeave={e=>e.currentTarget.style.color="var(--ink-3)"}>
+                    {form.showPw
+                      ? <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94"/><path d="M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
+                      : <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                    }
+                  </button>
+                </div>
+                <button type="submit" className="btn btn-fill" disabled={authLoading} style={{width:"100%",justifyContent:"center",padding:11,marginTop:18,fontSize:14}}>
+                  {authLoading?"…":authMode==="login"?"Sign in":"Create account"}
                 </button>
-              </div>
-              <button type="submit" className="btn btn-fill" disabled={authLoading} style={{width:"100%",justifyContent:"center",padding:11,marginTop:18,fontSize:14}}>
-                {authLoading?"…":authMode==="login"?"Sign in":"Create account"}
-              </button>
-              <button type="button" className="m-link" onClick={()=>{setAuthMode(authMode==="login"?"signup":"login");setAuthError("");}}>
-                {authMode==="login"?"No account? Sign up free":"Already have an account? Sign in"}
-              </button>
+                <button type="button" className="m-link" onClick={()=>{setAuthMode(authMode==="login"?"signup":"login");setAuthError("");}}>
+                  {authMode==="login"?"No account? Sign up free":"Already have an account? Sign in"}
+                </button>
+              </>}
+              {authMode==="verify"&&(
+                <div style={{textAlign:"center",padding:"12px 0 8px"}}>
+                  <div style={{fontSize:36,marginBottom:12}}>✉️</div>
+                  <button type="button" className="btn btn-fill" style={{width:"100%",justifyContent:"center",padding:11,marginTop:8,fontSize:14}}
+                    onClick={()=>{setAuthMode("login");setAuthError("");setForm(f=>({...f,password:""}));}}>
+                    Go to sign in
+                  </button>
+                  <button type="button" className="m-link" onClick={()=>{setAuthMode("signup");setAuthError("");}}>
+                    Use a different email
+                  </button>
+                </div>
+              )}
             </form>
           </div>
         </div>
