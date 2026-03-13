@@ -601,22 +601,25 @@ export default function App() {
 
   /* ── TAGS ── */
   const addTag = async (val) => {
+    if(!user){ping("Sign in to add tags");return;}
+    if(!videoRowId.current){ping("Load a video first");return;}
     const t = (val||tagInput).trim().toLowerCase().replace(/\s+/g,"-");
     if(!t||videoTags.includes(t)){setTagInput("");return;}
     const nt = [...videoTags,t];
     setVideoTags(nt);setTagInput("");
-    if(videoRowId.current){
+    try {
       await rest("PATCH","videos",{body:{tags:nt},filter:`id=eq.${videoRowId.current}`,returning:"minimal"});
       setHistory(h=>h.map(v=>v.id===videoRowId.current?{...v,tags:nt}:v));
-    }
+    } catch(e){setVideoTags(videoTags);ping("Error saving tag: "+e.message);}
   };
   const removeTag = async t => {
+    if(!user||!videoRowId.current) return;
     const nt = videoTags.filter(x=>x!==t);
     setVideoTags(nt);
-    if(videoRowId.current){
+    try {
       await rest("PATCH","videos",{body:{tags:nt},filter:`id=eq.${videoRowId.current}`,returning:"minimal"});
       setHistory(h=>h.map(v=>v.id===videoRowId.current?{...v,tags:nt}:v));
-    }
+    } catch(e){setVideoTags(videoTags);ping("Error removing tag: "+e.message);}
   };
 
   /* ── BOOKMARKS ── */
