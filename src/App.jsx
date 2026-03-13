@@ -340,7 +340,7 @@ const TRANSCRIPT = [
   {time:105, text:"In the modernist tradition, Mies van der Rohe distilled architecture to its essential elements — skin, structure, and space."},
   {time:122, text:"The threshold — that liminal moment of transition between outside and inside — carries enormous psychological weight."},
 ];
-const FOLDERS = ["All","Architecture","Philosophy","Favorites"];
+const FOLDERS = ["All","Favorites"];
 const fmt = s => `${Math.floor(s/60)}:${String(s%60).padStart(2,"0")}`;
 const getVid = u => (u.match(/(?:v=|youtu\.be\/)([a-zA-Z0-9_-]{11})/)||[])[1]||null;
 const fmtDate = d => { const M=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"]; const dt=new Date(d); return `${M[dt.getMonth()]} ${dt.getDate()}, ${dt.getFullYear()}`; };
@@ -381,11 +381,13 @@ export default function App() {
   const [defModal,setDefModal] = useState(null);
   const transcriptRef = useRef(null);
   const [bookmarks,setBookmarks] = useState([]);
-  const [activeTab,setActiveTab] = useState("transcript");
+  const [activeTab,setActiveTab] = useState("notes");
   const [chat,setChat] = useState([{role:"bot",text:"Ask me anything about this video — I'll answer only from its content."}]);
   const [chatInput,setChatInput] = useState("");
   const [chatLoading,setChatLoading] = useState(false);
   const [noteFolder,setNoteFolder] = useState("All");
+  const [folders,setFolders] = useState(["All","Favorites"]);
+  const [folderInput,setFolderInput] = useState("");
   const [tlHover,setTlHover] = useState(null);
   const [tlDragging,setTlDragging] = useState(false);
   const [notes,setNotes] = useState([]);
@@ -660,7 +662,7 @@ export default function App() {
     if(!videoRowId.current){ping("Load a video first");return;}
     const rawT = ytPlayer.current?.getCurrentTime ? Math.round(ytPlayer.current.getCurrentTime()) : TRANSCRIPT[activeLine].time;
     const ln = TRANSCRIPT.reduce((a,b)=>Math.abs(b.time-rawT)<Math.abs(a.time-rawT)?b:a);
-    const folder = noteFolder==="All"?"Favorites":noteFolder;
+    const folder = noteFolder==="All"?"Favorites":(folders.includes(noteFolder)?noteFolder:"Favorites");
     setActiveTab("notes");
     setNoteModal({time:rawT, lineText:ln.text, folder, title:"", content:""});
   };
@@ -783,6 +785,16 @@ export default function App() {
   };
 
   /* ── DERIVED ── */
+  const addFolder = () => {
+    const f = folderInput.trim();
+    if(!f||folders.includes(f)) return;
+    setFolders(p=>[...p,f]);
+    setFolderInput("");
+  };
+  const removeFolder = f => {
+    setFolders(p=>p.filter(x=>x!==f));
+    if(noteFolder===f) setNoteFolder("All");
+  };
   const filteredNotes = noteFolder==="All"?notes:notes.filter(n=>n.folder===noteFolder);
   const initials = profile?profile.name.split(" ").map(w=>w[0]).join("").slice(0,2).toUpperCase():"?";
 
@@ -970,11 +982,12 @@ export default function App() {
                 </div>
               </>
             )}
-            {/* overlay — click, mouse drag, touch drag */}
-            <div style={{position:"absolute",inset:0,zIndex:20,cursor:tlDragging?"grabbing":"pointer",touchAction:"none"}}
+            {/* overlay — handles click, mouse-drag, and touch-drag */}
+            <div
+              style={{position:"absolute",inset:0,zIndex:20,cursor:tlDragging?"grabbing":"pointer",touchAction:"none"}}
               onClick={e=>{
                 if(tlDragging) return;
-                const r=e.currentTarget.getBoundingClientRect();
+                const r=e.currentTarget.parentElement.getBoundingClientRect();
                 const ratio=Math.min(1,Math.max(0,(e.clientX-r.left)/r.width));
                 seekTo(Math.round(ratio*(videoDur.current||1)));
               }}
@@ -982,41 +995,45 @@ export default function App() {
                 e.preventDefault();
                 setTlDragging(true);
                 const track=e.currentTarget.parentElement;
-                const move=mv=>{
+                const onMove=mv=>{
                   const r=track.getBoundingClientRect();
                   const ratio=Math.min(1,Math.max(0,(mv.clientX-r.left)/r.width));
-                  setTlHover(ratio); setScrubPos(ratio);
+                  setTlHover(ratio);
+                  setScrubPos(ratio);
                 };
-                const up=mv=>{
+                const onUp=mv=>{
                   const r=track.getBoundingClientRect();
                   const ratio=Math.min(1,Math.max(0,(mv.clientX-r.left)/r.width));
                   seekTo(Math.round(ratio*(videoDur.current||1)));
-                  setTlDragging(false); setTlHover(null);
-                  window.removeEventListener("mousemove",move);
-                  window.removeEventListener("mouseup",up);
+                  setTlDragging(false);
+                  setTlHover(null);
+                  window.removeEventListener("mousemove",onMove);
+                  window.removeEventListener("mouseup",onUp);
                 };
-                window.addEventListener("mousemove",move);
-                window.addEventListener("mouseup",up);
+                window.addEventListener("mousemove",onMove);
+                window.addEventListener("mouseup",onUp);
               }}
               onTouchStart={e=>{
                 e.preventDefault();
                 setTlDragging(true);
                 const track=e.currentTarget.parentElement;
-                const move=tv=>{
+                const onMove=tv=>{
                   const r=track.getBoundingClientRect();
                   const ratio=Math.min(1,Math.max(0,(tv.touches[0].clientX-r.left)/r.width));
-                  setTlHover(ratio); setScrubPos(ratio);
+                  setTlHover(ratio);
+                  setScrubPos(ratio);
                 };
-                const up=tv=>{
+                const onUp=tv=>{
                   const r=track.getBoundingClientRect();
                   const ratio=Math.min(1,Math.max(0,(tv.changedTouches[0].clientX-r.left)/r.width));
                   seekTo(Math.round(ratio*(videoDur.current||1)));
-                  setTlDragging(false); setTlHover(null);
-                  window.removeEventListener("touchmove",move);
-                  window.removeEventListener("touchend",up);
+                  setTlDragging(false);
+                  setTlHover(null);
+                  window.removeEventListener("touchmove",onMove);
+                  window.removeEventListener("touchend",onUp);
                 };
-                window.addEventListener("touchmove",move,{passive:false});
-                window.addEventListener("touchend",up);
+                window.addEventListener("touchmove",onMove,{passive:false});
+                window.addEventListener("touchend",onUp);
               }}
             />
           </div>
@@ -1040,60 +1057,12 @@ export default function App() {
         {/* TAB PANEL */}
         <div className="tab-panel">
           <div className="tabs">
-            {[{id:"transcript",label:"Transcript",icon:Ico.txt},{id:"chat",label:"Ask video",icon:Ico.chat},{id:"notes",label:"My Notes",icon:Ico.note}].map(t=>(
+            {[{id:"notes",label:"My Notes",icon:Ico.note}].map(t=>(
               <button key={t.id} className={`tab${activeTab===t.id?" on":""}`} onClick={()=>setActiveTab(t.id)}>
                 <span className="tab-ico">{t.icon}</span>{t.label}
               </button>
             ))}
           </div>
-
-          {/* TRANSCRIPT */}
-          {activeTab==="transcript"&&(
-            <>
-              <div className="t-controls">
-                <span className="t-hint">
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2"><path d="M1 6v16l7-4 8 4 7-4V2l-7 4-8-4-7 4z"/><path d="M8 2v16M16 6v16"/></svg>
-                  Select any word or phrase to look it up
-                </span>
-                <select className="lang-sel" value={lang} onChange={e=>setLang(e.target.value)}>
-                  {["Original","Chinese","Spanish","French","Japanese","Arabic","German","Portuguese"].map(l=><option key={l}>{l}</option>)}
-                </select>
-              </div>
-              <div className="tscroll" ref={transcriptRef} onMouseUp={handleMouseUp}>
-                {TRANSCRIPT.map((line,i)=>(
-                  <div key={i} className={`tline${activeLine===i?" on":""}`} onClick={()=>seekTo(TRANSCRIPT[i].time)}>
-                    <span className="tts">{fmt(line.time)}</span>
-                    <span className="ttxt">{line.text.split(" ").map((w,j)=><span key={j} className="tw">{w}{" "}</span>)}</span>
-                  </div>
-                ))}
-              </div>
-            </>
-          )}
-
-          {/* CHAT */}
-          {activeTab==="chat"&&(
-            <>
-              <div className="chatfeed">
-                {chat.map((m,i)=>(
-                  <div key={i} className={`cmsg${m.role==="user"?" um":""}`}>
-                    <div className={`clabel${m.role==="user"?" r":""}`}>{m.role==="user"?"You":"Assistant"}</div>
-                    <div className={`cbub cbub-${m.role==="user"?"u":"b"}`}>{m.text}</div>
-                    <div className="clr"/>
-                  </div>
-                ))}
-                {chatLoading&&<div className="cmsg"><div className="clabel">Assistant</div><div className="cbub cbub-b"><div className="dots"><div className="dot"/><div className="dot"/><div className="dot"/></div></div></div>}
-                <div ref={chatEndRef}/>
-              </div>
-              <div className="chatfoot">
-                <textarea className="chatta" rows={2} value={chatInput}
-                  onChange={e=>setChatInput(e.target.value)}
-                  onKeyDown={e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();sendChat();}}}
-                  placeholder="Ask a question about this video… (Enter to send)"
-                />
-                <button className="btn btn-fill btn-icon" onClick={sendChat} disabled={chatLoading} style={{alignSelf:"flex-end",flexShrink:0}}>{Ico.send}</button>
-              </div>
-            </>
-          )}
 
           {/* NOTES */}
           {activeTab==="notes"&&(
@@ -1119,7 +1088,7 @@ export default function App() {
                     <div>
                       <div className="note-field-label">FOLDER</div>
                       <div className="note-folder-row">
-                        {["Architecture","Philosophy","Favorites"].map(f=>(
+                        {folders.filter(f=>f!=="All").map(f=>(
                           <button key={f} className={`note-folder-btn${noteModal.folder===f?" on":""}`} onClick={()=>setNoteModal(m=>({...m,folder:f}))}>{f}</button>
                         ))}
                       </div>
@@ -1136,8 +1105,24 @@ export default function App() {
                     <span style={{fontSize:12,color:"var(--ink-3)"}}>{filteredNotes.length} note{filteredNotes.length!==1?"s":""}</span>
                     <button className="btn btn-sm" onClick={addNote} style={{gap:5}}>{Ico.plus} Add note</button>
                   </div>
-                  <div className="nfolders">
-                    {FOLDERS.map(f=><button key={f} className={`nftab${noteFolder===f?" on":""}`} onClick={()=>setNoteFolder(f)}>{f}</button>)}
+                  <div className="nfolders" style={{alignItems:"center"}}>
+                    {folders.map(f=>(
+                      <div key={f} style={{display:"flex",alignItems:"center",flexShrink:0}}>
+                        <button className={`nftab${noteFolder===f?" on":""}`} onClick={()=>setNoteFolder(f)}>{f}</button>
+                        {f!=="All"&&f!=="Favorites"&&(
+                          <button onClick={()=>removeFolder(f)} title="Remove folder"
+                            style={{background:"none",border:"none",cursor:"pointer",color:"var(--ink-3)",fontSize:13,padding:"0 4px 0 0",lineHeight:1,marginLeft:-6}}>×</button>
+                        )}
+                      </div>
+                    ))}
+                    <div style={{display:"flex",alignItems:"center",gap:4,padding:"0 8px",flexShrink:0}}>
+                      <input value={folderInput} onChange={e=>setFolderInput(e.target.value)}
+                        onKeyDown={e=>{if(e.key==="Enter") addFolder();}}
+                        placeholder="+ folder"
+                        style={{fontSize:11,border:"none",background:"none",color:"var(--ink-3)",width:58,outline:"none",fontFamily:"'IBM Plex Sans',sans-serif",padding:"8px 0"}}/>
+                      {folderInput.trim()&&<button onClick={addFolder}
+                        style={{fontSize:11,background:"none",border:"none",cursor:"pointer",color:"var(--lime)",fontWeight:600,padding:"0 2px"}}>Add</button>}
+                    </div>
                   </div>
                   <div className="notes-body">
                     {filteredNotes.length===0&&<div style={{padding:"24px 0",textAlign:"center"}}><p style={{fontSize:14,color:"var(--ink-3)",fontStyle:"italic",fontFamily:"'IBM Plex Sans',sans-serif"}}>No notes in this folder yet</p></div>}
